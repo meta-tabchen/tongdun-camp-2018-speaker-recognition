@@ -11,7 +11,7 @@ import sys
 from random import shuffle
 import speechpy
 import datetime
-
+import tables
 
 ######################################
 ####### Define the dataset class #####
@@ -39,8 +39,8 @@ class AudioDataset():
         list_files = []
         for x in content:
             sound_file_path = os.path.join(self.audio_dir, x.strip().split()[1])
-            print('file path is '+'*'*10)
-            print(sound_file_path)
+            # print('file path is '+'*'*10)
+            # print(sound_file_path)
             try:
                 with open(sound_file_path, 'rb') as f:
                     riff_size, _ = wav._read_riff_chunk(f)
@@ -68,7 +68,7 @@ class AudioDataset():
     def __getitem__(self, idx):
         # Get the sound file path
         sound_file_path = os.path.join(self.audio_dir, self.sound_files[idx].split()[1])
-
+        # print(sound_file_path)
         ##############################
         ### Reading and processing ###
         ##############################
@@ -88,12 +88,12 @@ class AudioDataset():
         num_coefficient = 40
 
         # Staching frames
-        frames = speechpy.processing.stack_frames(signal, sampling_frequency=fs, frame_length=0.025,
-                                                  frame_stride=0.01,
-                                                  zero_padding=True)
+        # frames = speechpy.processing.stack_frames(signal, sampling_frequency=fs, frame_length=0.025,
+        #                                           frame_stride=0.01,
+        #                                           zero_padding=True)
 
-        # # Extracting power spectrum (choosing 3 seconds and elimination of DC)
-        power_spectrum = speechpy.processing.power_spectrum(frames, fft_points=2 * num_coefficient)[:, 1:]
+        # # # Extracting power spectrum (choosing 3 seconds and elimination of DC)
+        # power_spectrum = speechpy.processing.power_spectrum(frames, fft_points=2 * num_coefficient)[:, 1:]
 
         logenergy = speechpy.feature.lmfe(signal, sampling_frequency=fs, frame_length=0.025, frame_stride=0.01,
                                           num_filters=num_coefficient, fft_length=1024, low_frequency=0,
@@ -104,14 +104,17 @@ class AudioDataset():
         ########################
 
         # Label extraction
-        label = int(self.sound_files[idx].split()[0])
+        # print(self.sound_files)
+        label = int(self.sound_files[idx].split()[0][1:])
 
         sample = {'feature': logenergy, 'label': label}
 
-        ########################
-        ### Post Processing ####
-        ########################
+        ##################import os
+
+
+
         if self.transform:
+
             sample = self.transform(sample)
         else:
             feature, label = sample['feature'], sample['label']
@@ -213,34 +216,54 @@ class Compose(object):
             format_string += '    {0}'.format(t)
         format_string += '\n)'
         return format_string
+def get_batch(max_index=300,num_utterances=20,lenght=10,file_path=None):
+    max_index=len(open(file_path).readlines())
+    audio_dir='/home/x/Document/tongdun_data/data_aishell/wav/train'
+    data=np.zeros((lenght,80,40,num_utterances))
+    dataset = AudioDataset(files_path=file_path, audio_dir=audio_dir,
+                           transform=Compose([CMVN(), Feature_Cube(cube_shape=(1, 80, 40), augmentation=True), ToOutput()]))
+    label=[int(file_path[-8:-4])]*lenght
+    for i in range(lenght):
+        indexs=np.random.randint(1,max_index,num_utterances)
+        batch_features=[dataset.__getitem__(idx)[0][0,:,:,:] for idx in indexs]
+        print(batch_features[0].shape)
+        batch_features=np.vstack(batch_features)
+        batch_features=np.swapaxes(batch_features,0,1)
+        batch_features=np.swapaxes(batch_features,1,2)
+        print(batch_features.shape)
+        data[i,:,:,:]=batch_features
+    label=np.array(label)
+
+    return data,label
+    
+    
 
 
 if __name__ == '__main__':
-    # add parser
-    parser = argparse.ArgumentParser(description='Input pipeline')
+    
+    train_path_root='/home/x/Document/tongdun_data/data_aishell/wav/train'
+    subjects=os.listdir(train_path_root)[:2]
 
-    # The text file in which the paths to the audio files are available.
-    # The path are relative to the directory of the audio files
-    # Format of each line of the txt file is "class_label subject_dir/sound_file_name.ext"
-    # Example of each line: 0 subject/sound.wav
-    parser.add_argument('--file_path',
-                        default=os.path.expanduser(
-                            '~/github/3D-convolutional-speaker-recognition/code/0-input/file_path.txt'),
-                        help='The file names for development phase')
+    # subjects=['S0099', 'S0052', 'S0055', 'S0251', 'S0063', 'S0097', 'S0090', 'S0064', 'S0666', 'S0202', 'S0030', 'S0659', 'S0037', 'S0205']
+    all_feature_train,all_label_train=[],[]
+    all_feature_test,all_label_test=[],[]
+    for subject in subjects:
+        file_path='/home/x/Document/tongdun_data/data_aishell/wav/path_map/train/{}.txt'.format(subject)
 
-    # The directory of the audio files separated by subject
-    parser.add_argument('--audio_dir',
-                        default=os.path.expanduser('~/github/3D-convolutional-speaker-recognition/code/0-input/Audio'),
-                        help='Location of sound files')
-    args = parser.parse_args()
+        feature_train,label_train=get_batch(lenght=100,file_path=file_path)
+        feature_test,label_test=get_batch(lenght=2,file_path=file_path)
 
-    dataset = AudioDataset(files_path=args.file_path, audio_dir=args.audio_dir,
-                           transform=Compose([CMVN(), Feature_Cube(cube_shape=(20, 80, 40), augmentation=True), ToOutput()]))
-   
-    # idx is the representation of the batch size which chosen to be as one sample (index) from the data.
-    # ex: batch_features = [dataset.__getitem__(idx)[0] for idx in range(32)] 
-    # The batch_features is a list and len(batch_features)=32.
-    idx = 0
-    feature, label = dataset.__getitem__(idx)
-    print(feature.shape)
-    print(label)
+        all_feature_train.append(feature_train)
+        all_label_train.append(label_train)
+        all_feature_test.append(feature_test)
+        all_label_test.append(label_test)
+
+    h5file = tables.open_file("train.h5", mode="w")
+    label_test,label_train=np.hstack(all_label_test),np.hstack(all_label_train)
+    utterance_test,utterance_train=np.vstack(all_feature_test),np.vstack(all_feature_train)
+    h5file.create_array(h5file.root, 'label_test',label_test)
+    h5file.create_array(h5file.root, 'label_train',label_train)
+    h5file.create_array(h5file.root, 'utterance_test',utterance_test)
+    h5file.create_array(h5file.root, 'utterance_train',utterance_train)
+    print(h5file)
+    
